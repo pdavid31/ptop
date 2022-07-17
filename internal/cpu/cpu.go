@@ -81,6 +81,8 @@ func (c *CPU) Close() error {
 // in the current CPU instance by reading
 // them from file
 func (c *CPU) Update() error {
+	// reset the File reader to point
+	// to the top of the file again
 	_, err := c.fp.Seek(0, 0)
 	if err != nil {
 		return err
@@ -101,6 +103,67 @@ func (c *CPU) Update() error {
 
 				return err
 			}
+		case strings.HasPrefix(line, "intr"):
+			_, err := fmt.Sscanf(
+				line,
+				"intr %d",
+				&c.Interrupts,
+			)
+			if err != nil {
+				return err
+			}
+		case strings.HasPrefix(line, "ctxt"):
+			_, err := fmt.Sscanf(
+				line,
+				"ctxt %d",
+				&c.ContextSwitches,
+			)
+			if err != nil {
+				return err
+			}
+		case strings.HasPrefix(line, "btime"):
+			// scan the btime value into int64
+			var epoch int64
+			_, err := fmt.Sscanf(
+				line,
+				"btime %d",
+				&epoch,
+			)
+			if err != nil {
+				return err
+			}
+
+			// since the value represents the boot
+			// time expressed in seconds from UNIX epoch,
+			// create the time.Time object as such
+			c.BootTime = time.Unix(epoch, 0)
+		case strings.HasPrefix(line, "processes"):
+			_, err := fmt.Sscanf(
+				line,
+				"processes %d",
+				&c.Processes,
+			)
+			if err != nil {
+				return err
+			}
+		case strings.HasPrefix(line, "procs_running"):
+			_, err := fmt.Sscanf(
+				line,
+				"procs_running %d",
+				&c.ProcessesRunning,
+			)
+			if err != nil {
+				return err
+			}
+		case strings.HasPrefix(line, "procs_blocked"):
+			_, err := fmt.Sscanf(
+				line,
+				"procs_blocked %d",
+				&c.ProcessesBlocked,
+			)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -108,35 +171,69 @@ func (c *CPU) Update() error {
 }
 
 func (c *CPU) readCPULine(s string) error {
+	// extract the cpu identifier from the line
+	// if a match is found, the first string in slice
+	// contains the whole match, while the following
+	// strings contain the content of the capture groups
 	match := cpuPrefixRegex.FindStringSubmatch(s)
 
+	// return error if there are no matches
 	if len(match) == 0 {
 		return errNoMatch
 	}
 
-	cpuString := match[0]
-	cutLine := strings.ReplaceAll(s, cpuString, "")
+	// match[0] is the lines prefix, e.g.
+	// "cpu" or "cpu4"
+	// cut the prefix from the string, to not
+	// deal with the optional number in Load.Scan
+	cutLine := strings.ReplaceAll(s, match[0], "")
 
+	// create *Load instance
 	load := &Load{}
+	// scan the current line
 	if err := load.Scan(cutLine); err != nil {
 		return err
 	}
 
-	if len(match) > 2 {
-		idString := match[1]
-		id, err := strconv.Atoi(idString)
-		if err != nil {
-			return err
-		}
-
-		if cap(c.Cores) < id+1 {
-			c.Cores = make([]*Load, id+1)
-		}
-
-		c.Cores[id] = load
-	} else {
+	// check if there are at least two strings in slice
+	// or if match[1] (identifier number) is set
+	// otherwise assume that the lines gives the aggregated
+	// numbers for the whole cpu package
+	if len(match) < 2 || match[1] == "" {
 		c.Package = load
+		return nil
 	}
 
+	// convert the cores id to integer
+	id, err := strconv.Atoi(match[1])
+	if err != nil {
+		return err
+	}
+
+	// if the id of the current core
+	// is higher than the slices capacity
+	// create enough slice with a high
+	// enough capacity, copy all elements
+	// from the current c.Cores slice
+	// and overwrite the current c.Cores slice
+	if cap(c.Cores) < id+1 {
+		tmp := make([]*Load, id+1)
+		copy(tmp, c.Cores)
+		c.Cores = tmp
+	}
+
+	c.Cores[id] = load
+
 	return nil
+}
+
+// String (CPU) implements Stringer interface
+// and returns the CPU instances string representation
+func (c CPU) String() string {
+	return fmt.Sprintf(
+		"package: %v, cores: %v, interrupts: %d, context switches: %d, boot time: %s, processes: %d, processes running: %d, processes blocked: %d",
+		c.Package, c.Cores, c.Interrupts,
+		c.ContextSwitches, c.BootTime, c.Processes,
+		c.ProcessesRunning, c.ProcessesBlocked,
+	)
 }
