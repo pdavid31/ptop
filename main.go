@@ -44,7 +44,7 @@ func main() {
 			case <-shutdown:
 				return
 			default:
-				fmt.Println(c.Package)
+				fmt.Println(c)
 			}
 		}
 	}()
